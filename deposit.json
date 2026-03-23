@@ -1,18 +1,1 @@
-{
-  "6919025708_1774278856": {
-    "user_id": 6919025708,
-    "amount_bdt": 10000.0,
-    "txid": "Txjbsvsvbznx",
-    "screenshot_file_id": "AgACAgUAAxkBAAMXacFYuFNOUBQgWb8xR167Lu9HppkAAvYOaxvyDglWXpWfVoirlzsBAAMCAAN5AAM6BA",
-    "status": "pending",
-    "timestamp": "2026-03-23T15:14:16.127672"
-  },
-  "7650251578_1774279367": {
-    "user_id": 7650251578,
-    "amount_bdt": 1000.0,
-    "txid": "ADJCHKGVF",
-    "screenshot_file_id": "AgACAgUAAxkBAAM-acFavnQ8FoKgWZnDEuoGoOiRsRAAAocQaxtAlghWRBYnXOvV3EYBAAMCAAN5AAM6BA",
-    "status": "pending",
-    "timestamp": "2026-03-23T15:22:47.996946"
-  }
-}
+
