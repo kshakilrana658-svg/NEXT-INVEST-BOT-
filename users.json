@@ -25,6 +25,14 @@
     "balance": 0.05,
     "referred_by": null,
     "referrals": [],
-    "transactions": []
+    "transactions": [
+      {
+        "type": "signup_bonus",
+        "amount": 0.05,
+        "status": "completed",
+        "details": "",
+        "timestamp": "2026-03-23T15:17:01.075787"
+      }
+    ]
   }
 }
