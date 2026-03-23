@@ -8,35 +8,50 @@ import telebot
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton
 from flask import Flask
 
-# ======================= CONFIGURATION =======================
-BOT_TOKEN = "YOUR_BOT_TOKEN"
-OWNER_ID = 6919025708          # আপনার টেলিগ্রাম আইডি
-FORCE_CHANNEL = "@dark_princes12"      # ইউজারনেম @সহ
-FORCE_GROUP = "@myfirstchannel12"      # ইউজারনেম @সহ
+# ======================= কনফিগারেশন (এনভায়রনমেন্ট ভেরিয়েবল থেকে) =======================
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+OWNER_ID = int(os.getenv("OWNER_ID", "6919025708"))
+FORCE_CHANNEL = os.getenv("FORCE_CHANNEL", "@dark_princes12")
+FORCE_GROUP = os.getenv("FORCE_GROUP", "@myfirstchannel12")
 
 # GitHub Config
-GITHUB_TOKEN = "your_github_token"
-GITHUB_REPO = "username/repo"          # e.g., "darkprince/botdb"
-GITHUB_BRANCH = "main"
+GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
+GITHUB_REPO = os.getenv("GITHUB_REPO")
+GITHUB_BRANCH = os.getenv("GITHUB_BRANCH", "main")
 
-# Deposit number (as per spec)
-DEPOSIT_NUMBER = "01309924182"
+# Deposit number
+DEPOSIT_NUMBER = os.getenv("DEPOSIT_NUMBER", "01309924182")
+
+# Check if critical variables are set
+if not BOT_TOKEN:
+    raise ValueError("BOT_TOKEN environment variable not set!")
+if not GITHUB_TOKEN or not GITHUB_REPO:
+    print("Warning: GitHub credentials not fully set. Bot will use local fallback (not recommended).")
 
 bot = telebot.TeleBot(BOT_TOKEN, parse_mode="HTML")
 
 # ======================= GITHUB HELPER =======================
 def github_read(file_name):
+    """GitHub থেকে JSON ফাইল পড়ে"""
+    if not GITHUB_TOKEN or not GITHUB_REPO:
+        return {}
     url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/{file_name}"
     headers = {"Authorization": f"token {GITHUB_TOKEN}"}
-    resp = requests.get(url, headers=headers)
-    if resp.status_code == 200:
-        import base64
-        content = base64.b64decode(resp.json()["content"]).decode("utf-8")
-        return json.loads(content)
-    else:
-        return {}
+    try:
+        resp = requests.get(url, headers=headers)
+        if resp.status_code == 200:
+            import base64
+            content = base64.b64decode(resp.json()["content"]).decode("utf-8")
+            return json.loads(content)
+    except Exception as e:
+        print(f"GitHub read error: {e}")
+    return {}
 
 def github_write(file_name, data):
+    """GitHub-এ JSON ফাইল আপডেট বা তৈরি"""
+    if not GITHUB_TOKEN or not GITHUB_REPO:
+        print(f"GitHub write skipped for {file_name} (no credentials)")
+        return False
     url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/{file_name}"
     headers = {"Authorization": f"token {GITHUB_TOKEN}"}
     get_resp = requests.get(url, headers=headers)
@@ -56,12 +71,8 @@ def github_write(file_name, data):
     return put_resp.status_code in [200, 201]
 
 # ======================= DATA LAYER (4 FILES) =======================
-# users.json: { user_id: { "id": int, "username": str, "first_name": str, "joined": str, "balance": float, "referred_by": int|null, "referrals": [user_id], "transactions": [] } }
-# deposit.json: { request_id: { "user_id": int, "amount_bdt": float, "txid": str, "screenshot_file_id": str, "status": "pending/approved/rejected", "timestamp": str } }
-# withdraw.json: { request_id: { "user_id": int, "amount_usd": float, "method": str, "account": str, "status": "pending/approved/rejected", "timestamp": str } }
-# invest.json: { "plans": { plan_id: { "name": str, "profit_percent": float, "duration_days": int, "min_amount": float } }, "investments": { user_id: [ { "plan_id": str, "amount": float, "start_date": str, "end_date": str, "status": "active/completed", "profit_added": bool } ] } }
+# users.json, deposit.json, withdraw.json, invest.json
 
-# ---------- User Functions ----------
 def get_user(user_id):
     users = github_read("users.json")
     return users.get(str(user_id))
@@ -95,7 +106,6 @@ def add_transaction(user_id, txn_type, amount, status, details=""):
         "details": details,
         "timestamp": datetime.now().isoformat()
     })
-    # Keep last 50 transactions to avoid bloating
     if len(txn_list) > 50:
         txn_list = txn_list[-50:]
     user["transactions"] = txn_list
@@ -106,17 +116,14 @@ def add_referral(new_user_id, ref_by):
     if ref_by == new_user_id:
         return False
     users = github_read("users.json")
-    # Add referral to ref_by's list
     ref_user = users.get(str(ref_by), {})
     referrals = ref_user.get("referrals", [])
     if new_user_id not in referrals:
         referrals.append(new_user_id)
         ref_user["referrals"] = referrals
         users[str(ref_by)] = ref_user
-        # Give bonus
         update_balance(ref_by, 0.01, "add")
         add_transaction(ref_by, "referral_bonus", 0.01, "completed", f"New user {new_user_id}")
-    # Set referred_by for new user
     new_user = users.get(str(new_user_id), {})
     new_user["referred_by"] = ref_by
     users[str(new_user_id)] = new_user
@@ -127,7 +134,6 @@ def get_user_balance(user_id):
     user = get_user(user_id)
     return user.get("balance", 0.0) if user else 0.0
 
-# ---------- Deposit Functions ----------
 def create_deposit_request(user_id, amount_bdt, txid, screenshot_file_id):
     deposits = github_read("deposit.json")
     req_id = f"{user_id}_{int(time.time())}"
@@ -166,7 +172,6 @@ def reject_deposit(req_id):
         return True
     return False
 
-# ---------- Withdraw Functions ----------
 def create_withdraw_request(user_id, amount_usd, method, account):
     withdraws = github_read("withdraw.json")
     req_id = f"{user_id}_{int(time.time())}"
@@ -189,13 +194,11 @@ def approve_withdraw(req_id):
     withdraws = github_read("withdraw.json")
     if req_id in withdraws and withdraws[req_id]["status"] == "pending":
         req = withdraws[req_id]
-        # Deduct balance
         new_bal = update_balance(req["user_id"], req["amount_usd"], "subtract")
         if new_bal < 0:
-            # Should not happen if we check before, but just in case
-            update_balance(req["user_id"], req["amount_usd"], "add")  # revert
+            update_balance(req["user_id"], req["amount_usd"], "add")
             return False
-        add_transaction(req["user_id"], "withdraw", req["amount_usd"], "completed", f"Withdraw approved")
+        add_transaction(req["user_id"], "withdraw", req["amount_usd"], "completed", "Withdraw approved")
         withdraws[req_id]["status"] = "approved"
         github_write("withdraw.json", withdraws)
         return True
@@ -209,11 +212,9 @@ def reject_withdraw(req_id):
         return True
     return False
 
-# ---------- Investment Functions ----------
 def get_plans():
     data = github_read("invest.json")
     if "plans" not in data:
-        # Default plans
         data["plans"] = {
             "basic": {"name": "Basic", "profit_percent": 20, "duration_days": 7, "min_amount": 10},
             "premium": {"name": "Premium", "profit_percent": 30, "duration_days": 14, "min_amount": 50},
@@ -234,12 +235,9 @@ def add_investment(user_id, plan_id, amount):
     plan = plans[plan_id]
     if amount < plan["min_amount"]:
         return False
-    user_balance = get_user_balance(user_id)
-    if user_balance < amount:
+    if get_user_balance(user_id) < amount:
         return False
-    # Deduct balance
     update_balance(user_id, amount, "subtract")
-    # Record investment
     data = github_read("invest.json")
     if "investments" not in data:
         data["investments"] = {}
@@ -259,7 +257,7 @@ def add_investment(user_id, plan_id, amount):
     return True
 
 def process_auto_profit():
-    """Every 24 hours, check active investments and add profit if duration ended"""
+    """প্রতি ২৪ ঘন্টায় প্রফিট চেক করে"""
     while True:
         time.sleep(86400)
         data = github_read("invest.json")
@@ -281,10 +279,9 @@ def process_auto_profit():
         if changed:
             github_write("invest.json", data)
 
-# Start auto profit thread
 threading.Thread(target=process_auto_profit, daemon=True).start()
 
-# ======================= FORCE JOIN CHECK =======================
+# ======================= ফোর্স জয়েন চেক =======================
 def is_joined(user_id):
     try:
         member1 = bot.get_chat_member(FORCE_CHANNEL, user_id)
@@ -293,7 +290,7 @@ def is_joined(user_id):
     except:
         return False
 
-# ======================= MAIN MENU =======================
+# ======================= মেনু =======================
 def main_menu():
     markup = ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
     buttons = [
@@ -306,7 +303,7 @@ def main_menu():
     markup.add(*[KeyboardButton(b) for b in buttons])
     return markup
 
-# ======================= COMMAND HANDLERS =======================
+# ======================= কমান্ড হ্যান্ডলার =======================
 @bot.message_handler(commands=['start'])
 def start_cmd(message):
     user_id = message.from_user.id
@@ -320,7 +317,6 @@ def start_cmd(message):
 
     user = get_user(user_id)
     if not user:
-        # New user
         ref_param = message.text.split()
         ref_by = None
         if len(ref_param) > 1 and ref_param[1].isdigit():
@@ -330,7 +326,7 @@ def start_cmd(message):
             "username": message.from_user.username,
             "first_name": message.from_user.first_name,
             "joined": datetime.now().isoformat(),
-            "balance": 0.05,  # Signup bonus
+            "balance": 0.05,
             "referred_by": None,
             "referrals": [],
             "transactions": []
@@ -353,7 +349,7 @@ def verify_cb(call):
     else:
         bot.answer_callback_query(call.id, "Still not joined. Please join both.")
 
-# ------------------- MENU BUTTON HANDLERS -------------------
+# ------------------- মেনু বাটন -------------------
 @bot.message_handler(func=lambda m: m.text == "📊 Plans")
 def plans_btn(m):
     plans = get_plans()
@@ -398,7 +394,7 @@ def process_invest(m):
 def wallet_btn(m):
     bal = get_user_balance(m.from_user.id)
     user = get_user(m.from_user.id)
-    transactions = user.get("transactions", [])[-5:]  # last 5
+    transactions = user.get("transactions", [])[-5:]
     text = f"💰 Balance: ${bal:.2f}\n\n📜 Last 5 Transactions:\n"
     for t in transactions[::-1]:
         text += f"{t['type']}: ${t['amount']} ({t['status']})\n"
@@ -414,7 +410,6 @@ def process_deposit_txid(m):
     if not txid:
         bot.send_message(m.chat.id, "TXID cannot be empty. Please start deposit again.")
         return
-    # Store TXID temporarily
     if not hasattr(bot, 'temp_deposit'):
         bot.temp_deposit = {}
     bot.temp_deposit[m.from_user.id] = {"txid": txid}
@@ -443,7 +438,6 @@ def process_deposit_amount(m, txid, file_id):
         return
     req_id = create_deposit_request(m.from_user.id, amount_bdt, txid, file_id)
     bot.send_message(m.chat.id, f"✅ Deposit request submitted! Amount: {amount_bdt} BDT\nTXID: {txid}\nRequest ID: {req_id}\n\nAdmin will review it.")
-    # Clean temp
     if hasattr(bot, 'temp_deposit') and m.from_user.id in bot.temp_deposit:
         del bot.temp_deposit[m.from_user.id]
 
@@ -462,7 +456,6 @@ def process_withdraw_amount(m):
         if bal < amount:
             bot.send_message(m.chat.id, "Insufficient balance.")
             return
-        # Ask method
         markup = ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
         markup.add("Bkash", "Nagad", "Rocket")
         msg = bot.send_message(m.chat.id, "Select withdrawal method:", reply_markup=markup)
@@ -528,7 +521,7 @@ def profile_btn(m):
 def support_btn(m):
     bot.send_message(m.chat.id, "📩 For support contact: @dark_princes12")
 
-# ======================= ADMIN PANEL =======================
+# ======================= এডমিন প্যানেল =======================
 @bot.message_handler(commands=['admin'])
 def admin_panel(m):
     if m.from_user.id != OWNER_ID:
@@ -659,7 +652,7 @@ def ban_user(m):
     except:
         bot.send_message(m.chat.id, "Invalid user ID.")
 
-# ------------------- Deposit/Withdraw Approval Callbacks -------------------
+# ------------------- ডিপোজিট/উইথড্র অ্যাপ্রুভ -------------------
 @bot.callback_query_handler(func=lambda call: call.data.startswith("view_dep_screenshot_"))
 def view_dep_screenshot(call):
     req_id = call.data.split("_")[3]
@@ -729,7 +722,7 @@ def reject_wd_cb(call):
     else:
         bot.answer_callback_query(call.id, "Failed or already processed.")
 
-# ======================= FLASK HEALTH CHECK (for Render) =======================
+# ======================= FLASK HEALTH CHECK (Render-এর জন্য) =======================
 flask_app = Flask(__name__)
 
 @flask_app.route('/')
@@ -741,10 +734,9 @@ def run_flask():
     port = int(os.environ.get("PORT", 5000))
     flask_app.run(host="0.0.0.0", port=port)
 
-# Start Flask in a background thread
 threading.Thread(target=run_flask, daemon=True).start()
 
-# ======================= START BOT =======================
+# ======================= বট চালানো =======================
 if __name__ == "__main__":
     print("Bot started...")
     bot.infinity_polling()
